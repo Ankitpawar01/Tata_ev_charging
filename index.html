@@ -1,0 +1,2505 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tata Power EV Analytics Dashboard</title>
+
+  <!-- React 18, ReactDOM 18 & React-Is (Required by Recharts UMD) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-is@18/umd/react-is.production.min.js" crossorigin></script>
+
+  <!-- Babel Standalone for JSX compilation in browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            tata: {
+              navy: '#002b49', // Professional Tata Navy Blue
+              blue: '#005b82', // Standard Tata Blue
+              sky: '#00a3e0',  // Accent Cyan/Sky Blue
+              green: '#10b981', // Clean Energy Green
+              light: '#f1f5f9'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Recharts UMD Build & Dependencies -->
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js" crossorigin></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
+
+  <!-- Local Mock Data script -->
+  <script src="mockData.js"></script>
+
+  <!-- Custom styles -->
+  <style>
+    /* Custom scrollbars for clean dashboard look */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+
+    /* Print styles to hide UI wrappers and fit content to A4 */
+    @media print {
+      body, html {
+        background: #ffffff !important;
+        color: #000000 !important;
+        overflow: visible !important;
+        height: auto !important;
+      }
+      .print-container {
+        display: block !important;
+      }
+    }
+  </style>
+</head>
+<body class="h-full overflow-hidden text-slate-800">
+  <div id="root" class="h-full"></div>
+
+  <!-- Diagnostic Error Overlay -->
+  <div id="error-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 hidden font-sans">
+    <div class="w-full max-w-2xl bg-white rounded-xl p-6 shadow-2xl border border-red-200">
+      <div class="flex items-center space-x-3 text-red-600 mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <h3 class="text-lg font-bold">Dashboard Initialization Error</h3>
+      </div>
+      <p class="text-sm text-slate-600 mb-4">
+        The dashboard failed to render. This usually happens when opening a local HTML file directly over the <code>file://</code> protocol because some browsers restrict CDN assets, or if a required asset failed to load.
+      </p>
+      <div class="bg-slate-50 border border-slate-200 rounded-lg p-4 font-mono text-xs text-red-600 overflow-x-auto whitespace-pre-wrap max-h-60" id="error-message">
+        No errors logged yet.
+      </div>
+      <div class="mt-6 flex justify-end space-x-3 text-xs">
+        <button onclick="window.location.reload()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg font-semibold transition">
+          Reload Page
+        </button>
+        <button onclick="window.location.href='http://localhost:8000'" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-semibold transition">
+          Switch to Localhost Server
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const errorList = [];
+      function triggerOverlay(errorDetails) {
+        // Prevent duplicate overlays for same error text
+        if (errorList.includes(errorDetails)) return;
+        errorList.push(errorDetails);
+        const overlay = document.getElementById('error-overlay');
+        const box = document.getElementById('error-message');
+        if (overlay && box) {
+          overlay.classList.remove('hidden');
+          box.textContent = errorList.join('\n\n');
+        }
+      }
+
+      window.addEventListener('error', function(event) {
+        const file = event.filename ? event.filename.split('/').pop() : 'unknown';
+        triggerOverlay(`[Error] ${event.message}\nLocation: ${file}:${event.lineno}:${event.colno}`);
+      });
+
+      window.addEventListener('unhandledrejection', function(event) {
+        triggerOverlay(`[Promise Rejection] ${event.reason}`);
+      });
+
+      // Hook console.error to capture React render crashes
+      const originalConsoleError = console.error;
+      console.error = function(...args) {
+        originalConsoleError.apply(console, args);
+        const errText = args.map(arg => {
+          if (arg instanceof Error) return arg.stack || arg.message;
+          if (typeof arg === 'object') {
+            try { return JSON.stringify(arg); } catch(e) { return String(arg); }
+          }
+          return String(arg);
+        }).join(' ');
+        
+        // Hide benign react warnings, only show actual exceptions/errors
+        if (errText.includes('Warning:') || errText.includes('componentWillMount') || errText.includes('componentWillReceiveProps')) {
+          return;
+        }
+        triggerOverlay(`[Console Error] ${errText}`);
+      };
+    })();
+  </script>
+
+  <!-- React Code with Babel -->
+  <script type="text/babel">
+    const { useState, useMemo, useEffect } = React;
+    const {
+      ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar,
+      Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ZAxis
+    } = Recharts;
+
+    // SVG Icons Map for zero-dependency Lucide alternatives
+    const Icons = {
+      Overview: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      ),
+      Demand: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/><path d="m3 3 18 18"/></svg>
+      ),
+      Gap: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v16"/><path d="M15 4v16"/><path d="M21 8H3"/><path d="M21 16H3"/></svg>
+      ),
+      Location: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+      ),
+      Revenue: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      ),
+      Recommendation: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      ),
+      Explorer: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+      ),
+      Pipeline: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
+      ),
+      Search: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/></svg>
+      ),
+      Filter: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+      ),
+      Bolt: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      ),
+      Export: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+      ),
+      TrendingUp: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+      ),
+      TrendingDown: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>
+      ),
+      MapMarker: ({ color = "currentColor", size = 20 }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3" fill={color === "currentColor" ? "none" : "#fff"}/></svg>
+      )
+    };
+
+    // Indian Cities Latitude and Longitude Map relative coordinates (scaled to SVG viewBox 0 0 500 560)
+    const mapCoordinates = {
+      "New Delhi": { x: 200, y: 150 },
+      "Dwarka": { x: 190, y: 153 },
+      "Rohini": { x: 195, y: 145 },
+      "Saket": { x: 205, y: 158 },
+      "Mumbai": { x: 125, y: 350 },
+      "Pune": { x: 140, y: 370 },
+      "Nagpur": { x: 245, y: 320 },
+      "Nashik": { x: 135, y: 340 },
+      "Thane": { x: 128, y: 347 },
+      "Bengaluru": { x: 215, y: 470 },
+      "Mysuru": { x: 205, y: 485 },
+      "Hubli": { x: 190, y: 440 },
+      "Mangaluru": { x: 185, y: 475 },
+      "Chennai": { x: 255, y: 470 },
+      "Coimbatore": { x: 220, y: 500 },
+      "Madurai": { x: 235, y: 520 },
+      "Salem": { x: 240, y: 495 },
+      "Hyderabad": { x: 230, y: 395 },
+      "Warangal": { x: 245, y: 385 },
+      "Nizamabad": { x: 225, y: 380 },
+      "Lucknow": { x: 280, y: 195 },
+      "Noida": { x: 215, y: 155 },
+      "Ghaziabad": { x: 218, y: 150 },
+      "Kanpur": { x: 270, y: 200 },
+      "Varanasi": { x: 310, y: 210 },
+      "Ahmedabad": { x: 110, y: 280 },
+      "Surat": { x: 115, y: 310 },
+      "Vadodara": { x: 125, y: 295 },
+      "Rajkot": { x: 85, y: 290 },
+      "Kolkata": { x: 390, y: 260 },
+      "Howrah": { x: 385, y: 260 },
+      "Siliguri": { x: 395, y: 200 },
+      "Jaipur": { x: 175, y: 195 },
+      "Jodhpur": { x: 135, y: 195 },
+      "Udaipur": { x: 130, y: 225 },
+      "Indore": { x: 185, y: 290 },
+      "Bhopal": { x: 205, y: 285 },
+      "Jabalpur": { x: 240, y: 280 },
+      "Kochi": { x: 205, y: 535 },
+      "Thiruvananthapuram": { x: 212, y: 560 },
+      "Kozhikode": { x: 200, y: 510 },
+      "Gurgaon": { x: 196, y: 158 },
+      "Faridabad": { x: 204, y: 160 },
+      "Panipat": { x: 195, y: 135 },
+      "Ludhiana": { x: 180, y: 115 },
+      "Amritsar": { x: 165, y: 100 },
+      "Jalandhar": { x: 173, y: 108 },
+      "Visakhapatnam": { x: 290, y: 395 },
+      "Vijayawada": { x: 265, y: 415 },
+      "Patna": { x: 350, y: 215 },
+      "Gaya": { x: 345, y: 225 },
+      "Bhubaneswar": { x: 335, y: 325 },
+      "Cuttack": { x: 338, y: 320 },
+      "Ranchi": { x: 310, y: 265 },
+      "Jamshedpur": { x: 325, y: 275 },
+      "Dhanbad": { x: 320, y: 258 },
+      "Raipur": { x: 260, y: 305 },
+      "Bilaspur": { x: 265, y: 295 },
+      "Dehradun": { x: 220, y: 135 },
+      "Haridwar": { x: 225, y: 140 },
+      "Shimla": { x: 205, y: 120 },
+      "Dharamshala": { x: 195, y: 110 },
+      "Srinagar": { x: 160, y: 70 },
+      "Jammu": { x: 170, y: 90 },
+      "Leh": { x: 200, y: 60 },
+      "Panaji": { x: 130, y: 430 },
+      "Margao": { x: 132, y: 435 },
+      "Guwahati": { x: 430, y: 200 },
+      "Dibrugarh": { x: 475, y: 180 },
+      "Agartala": { x: 430, y: 240 },
+      "Shillong": { x: 440, y: 210 },
+      "Imphal": { x: 470, y: 225 },
+      "Aizawl": { x: 460, y: 245 },
+      "Kohima": { x: 475, y: 210 },
+      "Dimapur": { x: 472, y: 205 },
+      "Gangtok": { x: 380, y: 190 },
+      "Itanagar": { x: 465, y: 190 },
+      "Chandigarh": { x: 195, y: 125 },
+      "Puducherry": { x: 260, y: 485 },
+      "Agra": { x: 230, y: 175 },
+      "Meerut": { x: 210, y: 140 },
+      "Mathura": { x: 215, y: 165 },
+      "Yamuna Expressway Corridor": { x: 220, y: 168 },
+      "Mumbai-Pune Expressway": { x: 132, y: 360 },
+      "Aurangabad": { x: 165, y: 335 },
+      "Kolhapur": { x: 145, y: 410 },
+      "Gwalior": { x: 215, y: 210 },
+      "Ujjain": { x: 175, y: 285 },
+      "Kota": { x: 175, y: 235 },
+      "Ajmer": { x: 160, y: 200 },
+      "Delhi-Jaipur Highway Corridor": { x: 185, y: 175 },
+      "Bengaluru-Mysuru Expressway": { x: 210, y: 478 },
+      "Tiruchirappalli": { x: 245, y: 505 },
+      "Tirupati": { x: 260, y: 450 },
+      "Guntur": { x: 270, y: 420 },
+      "Rourkela": { x: 325, y: 290 },
+      "Bokaro": { x: 330, y: 260 },
+      "Karnal": { x: 198, y: 130 },
+      "Rohtak": { x: 190, y: 148 },
+      "Bhatinda": { x: 170, y: 125 }
+    };
+
+    // Helper functions for currency and scaling formatting
+    const formatINR = (value) => {
+      if (value >= 10000000) return `₹${(value / 10000000).toFixed(2)} Cr`;
+      if (value >= 100000) return `₹${(value / 100000).toFixed(2)} Lakh`;
+      return `₹${value.toLocaleString()}`;
+    };
+
+    // Login & User Registration Component
+    function Login({ onLogin }) {
+      const [isSignUp, setIsSignUp] = useState(false);
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+      const [fullName, setFullName] = useState("");
+      const [confirmPassword, setConfirmPassword] = useState("");
+      const [role, setRole] = useState("Network Planning & Expansion");
+      const [remember, setRemember] = useState(true);
+      const [error, setError] = useState("");
+      const [success, setSuccess] = useState("");
+      const [loading, setLoading] = useState(false);
+
+      const clearAlerts = () => {
+        setError("");
+        setSuccess("");
+      };
+
+      const switchMode = (signUpMode) => {
+        setIsSignUp(signUpMode);
+        clearAlerts();
+      };
+
+      // Handle Sign In
+      const handleSignIn = async (e) => {
+        e.preventDefault();
+        clearAlerts();
+
+        const cleanEmail = email.trim().toLowerCase();
+        if (!cleanEmail) {
+          setError("Please enter your email address.");
+          return;
+        }
+        if (!password) {
+          setError("Please enter your password.");
+          return;
+        }
+
+        setLoading(true);
+
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: cleanEmail, password: password })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setSuccess("Authentication successful! Loading dashboard...");
+            setTimeout(() => onLogin(data.user), 600);
+            return;
+          } else {
+            setError(data.error || "Authentication failed. Please verify your credentials.");
+            setLoading(false);
+            return;
+          }
+        } catch (fetchErr) {
+          // Fallback to client-side localStorage check (if server is not running or file:// opened)
+          const localUsers = JSON.parse(localStorage.getItem("tata_ev_users") || "[]");
+          const found = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+
+          // Support default pre-seeded admin
+          if (cleanEmail === "admin@tatapower.com") {
+            if (password === "admin123" || password === "admin") {
+              setSuccess("Login successful!");
+              setTimeout(() => onLogin({ name: "Tata Admin", email: "admin@tatapower.com", role: "Senior Analyst" }), 500);
+              return;
+            } else {
+              setError("Incorrect password. Please verify and try again.");
+              setLoading(false);
+              return;
+            }
+          }
+
+          if (!found) {
+            setError("No account found with this email. Please click 'Create Account' to sign up.");
+            setLoading(false);
+            return;
+          }
+
+          if (found.password !== password) {
+            setError("Incorrect password. Please verify and try again.");
+            setLoading(false);
+            return;
+          }
+
+          setSuccess("Login successful!");
+          setTimeout(() => onLogin(found), 500);
+        }
+      };
+
+      // Handle Sign Up
+      const handleSignUp = async (e) => {
+        e.preventDefault();
+        clearAlerts();
+
+        const cleanName = fullName.trim();
+        const cleanEmail = email.trim().toLowerCase();
+
+        if (!cleanName) {
+          setError("Please enter your full name.");
+          return;
+        }
+        if (!cleanEmail || !cleanEmail.includes("@")) {
+          setError("Please enter a valid work email address.");
+          return;
+        }
+        if (!password) {
+          setError("Please enter a password.");
+          return;
+        }
+        if (password.length < 4) {
+          setError("Password must be at least 4 characters long.");
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError("Passwords do not match. Please re-enter.");
+          return;
+        }
+
+        setLoading(true);
+
+        const newUser = {
+          name: cleanName,
+          email: cleanEmail,
+          password: password,
+          role: role || "Strategic Analyst"
+        };
+
+        try {
+          const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(newUser)
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            // Also store in localStorage as cache
+            const localUsers = JSON.parse(localStorage.getItem("tata_ev_users") || "[]");
+            localUsers.push(newUser);
+            localStorage.setItem("tata_ev_users", JSON.stringify(localUsers));
+
+            setSuccess("Account created successfully! Loading dashboard...");
+            setTimeout(() => onLogin(data.user || newUser), 800);
+            return;
+          } else {
+            setError(data.error || "Failed to create account. Email might already exist.");
+            setLoading(false);
+            return;
+          }
+        } catch (fetchErr) {
+          // Fallback to client-side localStorage check
+          const localUsers = JSON.parse(localStorage.getItem("tata_ev_users") || "[]");
+          if (localUsers.some(u => u.email.toLowerCase() === cleanEmail) || cleanEmail === "admin@tatapower.com") {
+            setError("An account with this email already exists. Please sign in.");
+            setLoading(false);
+            return;
+          }
+          localUsers.push(newUser);
+          localStorage.setItem("tata_ev_users", JSON.stringify(localUsers));
+
+          setSuccess("Account created successfully! Loading dashboard...");
+          setTimeout(() => onLogin(newUser), 800);
+        }
+      };
+
+      return (
+        <div class="flex min-h-screen items-center justify-center bg-gradient-to-tr from-tata-navy to-tata-blue px-4 py-8">
+          <div class="w-full max-w-md space-y-6 rounded-2xl bg-white p-8 shadow-2xl border border-slate-100">
+            {/* Logo & Header */}
+            <div class="text-center">
+              <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-tata-navy text-tata-sky shadow-md">
+                <Icons.Bolt />
+              </div>
+              <h2 class="mt-4 text-2xl font-black tracking-tight text-tata-navy">TATA POWER</h2>
+              <p class="mt-0.5 text-xs text-slate-500 font-bold tracking-widest uppercase">EV Network Strategic Analytics</p>
+            </div>
+
+            {/* Switch Tabs: Sign In / Create Account */}
+            <div class="grid grid-cols-2 p-1 bg-slate-100 rounded-xl text-xs font-bold text-slate-600">
+              <button
+                type="button"
+                onClick={() => switchMode(false)}
+                class={`py-2 rounded-lg transition-all ${!isSignUp ? "bg-white text-tata-navy shadow-sm" : "hover:text-slate-900"}`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode(true)}
+                class={`py-2 rounded-lg transition-all ${isSignUp ? "bg-white text-tata-navy shadow-sm" : "hover:text-slate-900"}`}
+              >
+                Create Account
+              </button>
+            </div>
+
+            {/* Error Notification Banner */}
+            {error && (
+              <div class="p-3 bg-red-50 border-l-4 border-red-500 rounded-r-lg text-xs text-red-700 flex items-start space-x-2 animate-fadeIn">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span class="font-semibold leading-tight">{error}</span>
+              </div>
+            )}
+
+            {/* Success Notification Banner */}
+            {success && (
+              <div class="p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-r-lg text-xs text-emerald-800 flex items-start space-x-2 animate-fadeIn">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <span class="font-semibold leading-tight">{success}</span>
+              </div>
+            )}
+
+            {/* FORM */}
+            {!isSignUp ? (
+              /* SIGN IN FORM */
+              <form class="space-y-4" onSubmit={handleSignIn}>
+                <div>
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    class="block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                    placeholder="name@tatapower.com"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); clearAlerts(); }}
+                  />
+                </div>
+
+                <div>
+                  <div class="mb-1">
+                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      Password
+                    </label>
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    class="block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); clearAlerts(); }}
+                  />
+                </div>
+
+                <div class="flex items-center justify-between text-xs text-slate-600 pt-1">
+                  <label class="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={remember}
+                      onChange={(e) => setRemember(e.target.checked)}
+                      class="h-4 w-4 rounded border-slate-300 text-tata-blue focus:ring-tata-sky"
+                    />
+                    <span>Remember my session</span>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  class="w-full rounded-lg bg-tata-navy py-2.5 px-4 text-xs font-bold text-white shadow-md hover:bg-tata-blue focus:outline-none focus:ring-2 focus:ring-tata-sky transition disabled:opacity-50"
+                >
+                  {loading ? "Verifying Credentials..." : "Sign In to Dashboard"}
+                </button>
+              </form>
+            ) : (
+              /* CREATE ACCOUNT FORM */
+              <form class="space-y-3.5" onSubmit={handleSignUp}>
+                <div>
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    class="block w-full rounded-lg border border-slate-300 px-3.5 py-2 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                    placeholder="e.g. Anant Soni"
+                    value={fullName}
+                    onChange={(e) => { setFullName(e.target.value); clearAlerts(); }}
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                    Work Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    class="block w-full rounded-lg border border-slate-300 px-3.5 py-2 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                    placeholder="anant@tatapower.com"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); clearAlerts(); }}
+                  />
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                      Password *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                      placeholder="Min 4 chars"
+                      value={password}
+                      onChange={(e) => { setPassword(e.target.value); clearAlerts(); }}
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                      Confirm *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs"
+                      placeholder="Re-enter"
+                      value={confirmPassword}
+                      onChange={(e) => { setConfirmPassword(e.target.value); clearAlerts(); }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                    Department / Functional Domain *
+                  </label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    class="block w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-tata-sky focus:outline-none focus:ring-1 focus:ring-tata-sky sm:text-xs font-semibold bg-white"
+                  >
+                    <option value="Network Planning & Expansion">1. Network Planning & Expansion (Site Prioritization & Gap)</option>
+                    <option value="Finance & Commercial Strategy">2. Finance & Commercial Strategy (CapEx, OpEx & ROI)</option>
+                    <option value="Power Grid & Substation Engineering">3. Power Grid & Substation Engineering (Grid Load & Sizing)</option>
+                    <option value="Operations & Fleet Asset Management">4. Operations & Fleet Asset Management (Sessions & Utilization)</option>
+                  </select>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  class="w-full rounded-lg bg-emerald-600 py-2.5 px-4 text-xs font-bold text-white shadow-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition disabled:opacity-50 mt-2"
+                >
+                  {loading ? "Creating Profile..." : "Register & Sign In"}
+                </button>
+              </form>
+            )}
+
+            {/* Footer toggle & version */}
+            <div class="border-t border-slate-100 pt-3 text-center text-xs text-slate-500">
+              {!isSignUp ? (
+                <p>
+                  New analyst?{" "}
+                  <button
+                    type="button"
+                    onClick={() => switchMode(true)}
+                    class="font-bold text-tata-sky hover:text-sky-600 underline"
+                  >
+                    Create an account
+                  </button>
+                </p>
+              ) : (
+                <p>
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => switchMode(false)}
+                    class="font-bold text-tata-sky hover:text-sky-600 underline"
+                  >
+                    Sign in here
+                  </button>
+                </p>
+              )}
+              <span class="block text-[9px] text-slate-400 font-semibold uppercase tracking-widest mt-2">
+                Tata Power EV Security Gateway • v2.1
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // TopBar component
+    function TopBar({ filters, setFilters, uniqueStates, uniqueCities }) {
+      const handleStateChange = (e) => {
+        const state = e.target.value;
+        setFilters({ ...filters, state: state, city: "All" });
+      };
+
+      const handleCityChange = (e) => {
+        setFilters({ ...filters, city: e.target.value });
+      };
+
+      const handleDateChange = (e) => {
+        setFilters({ ...filters, date: e.target.value });
+      };
+
+      const handleRegionChange = (e) => {
+        setFilters({ ...filters, region: e.target.value, state: "All", city: "All" });
+      };
+
+      return (
+        <header class="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm z-10 shrink-0 gap-4">
+          <div class="flex items-center space-x-3 shrink-0">
+            <h1 class="text-base lg:text-lg font-black text-tata-navy tracking-tight whitespace-nowrap">Expansion & Revenue Analytics</h1>
+            <span class="hidden 2xl:inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/10 whitespace-nowrap">
+              Active Session
+            </span>
+          </div>
+
+          {/* Dynamic Filters toolbar */}
+          <div class="flex items-center space-x-2 shrink-0">
+            <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs text-slate-600 shrink-0">
+              <Icons.Filter />
+              <span class="font-medium hidden sm:inline">Filters:</span>
+            </div>
+
+            {/* Date Select */}
+            <select
+              value={filters.date}
+              onChange={handleDateChange}
+              class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm focus:border-tata-sky focus:outline-none shrink-0"
+            >
+              {window.EV_ANALYTICS_DATA.months.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+
+            {/* Region Select */}
+            <select
+              value={filters.region}
+              onChange={handleRegionChange}
+              class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm focus:border-tata-sky focus:outline-none shrink-0"
+            >
+              <option value="All">All Regions</option>
+              {window.EV_ANALYTICS_DATA.regions.map((r) => (
+                <option key={r} value={r}>{r} Region</option>
+              ))}
+            </select>
+
+            {/* State Select */}
+            <select
+              value={filters.state}
+              onChange={handleStateChange}
+              class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm focus:border-tata-sky focus:outline-none shrink-0"
+            >
+              <option value="All">All States</option>
+              {uniqueStates.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+
+            {/* City Select */}
+            <select
+              value={filters.city}
+              onChange={handleCityChange}
+              class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm focus:border-tata-sky focus:outline-none shrink-0"
+            >
+              <option value="All">All Cities</option>
+              {uniqueCities.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+
+            {/* Print Report Button */}
+            <button
+              onClick={() => window.print()}
+              class="flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow-sm transition ml-1 print:hidden whitespace-nowrap shrink-0"
+            >
+              <Icons.Export />
+              <span>Download Report</span>
+            </button>
+          </div>
+        </header>
+      );
+    }
+
+    // Sidebar navigation
+    function Sidebar({ activeTab, setActiveTab, currentUser, onLogout }) {
+      const menuItems = [
+        { id: "overview", label: "Overview", icon: Icons.Overview },
+        { id: "demand", label: "Demand Analysis", icon: Icons.Demand },
+        { id: "gap", label: "Infrastructure Gap", icon: Icons.Gap },
+        { id: "location", label: "Location Analysis", icon: Icons.Location },
+        { id: "revenue", label: "Revenue & ROI", icon: Icons.Revenue },
+        { id: "optimizer", label: "Charger Optimizer", icon: Icons.Bolt },
+        { id: "recommendations", label: "Expansion Guide", icon: Icons.Recommendation },
+        { id: "explorer", label: "Data Explorer", icon: Icons.Explorer },
+        { id: "pipeline", label: "Data Architecture", icon: Icons.Pipeline },
+      ];
+
+      return (
+        <aside class="flex w-64 flex-col bg-tata-navy text-slate-300">
+          {/* Header/Brand */}
+          <div class="flex h-16 items-center px-6 border-b border-slate-800">
+            <div class="flex items-center space-x-2.5">
+              <div class="flex h-8 w-8 items-center justify-center rounded-full bg-white text-tata-navy">
+                <Icons.Bolt />
+              </div>
+              <div>
+                <span class="text-base font-extrabold tracking-wider text-white">TATA POWER</span>
+                <span class="block text-[9px] font-bold text-tata-sky uppercase tracking-widest leading-none">EV ANALYTICS APP</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Nav Items */}
+          <nav class="flex-1 space-y-1.5 px-3 py-4">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  class={`flex w-full items-center space-x-3 rounded-lg px-4 py-2.5 text-xs font-semibold tracking-wide transition-all duration-150 ${
+                    isActive
+                      ? "bg-tata-blue text-white shadow-md border-l-4 border-tata-sky"
+                      : "hover:bg-slate-800 hover:text-white"
+                  }`}
+                >
+                  <Icon />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Footer/User */}
+          <div class="border-t border-slate-800 p-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-3">
+                <div class="h-9 w-9 rounded-full bg-tata-sky flex items-center justify-center text-tata-navy font-black text-xs shadow-sm uppercase">
+                  {currentUser?.name ? currentUser.name.slice(0, 2) : "TP"}
+                </div>
+                <div class="truncate max-w-[125px]">
+                  <p class="text-xs font-bold text-white truncate">{currentUser?.name || "Tata Analyst"}</p>
+                  <p class="text-[10px] text-slate-400 truncate">{currentUser?.role || "Corporate Planning"}</p>
+                </div>
+              </div>
+              <button onClick={onLogout} class="text-slate-500 hover:text-white p-1" title="Log Out">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+        </aside>
+      );
+    }
+
+    // Dashboard Views
+
+    // VIEW: Overview Dashboard
+    function OverviewDashboard({ currentData, monthlyTrend }) {
+      const summaryStats = useMemo(() => {
+        if (currentData.length === 0) return {};
+        const totalEvs = currentData.reduce((acc, r) => acc + r.evCount, 0);
+        const totalStations = currentData.reduce((acc, r) => acc + r.stations, 0);
+        const totalSessions = currentData.reduce((acc, r) => acc + r.sessions, 0);
+        const avgUtilization = (currentData.reduce((acc, r) => acc + r.utilization, 0) / currentData.length).toFixed(1);
+        const totalRevenue = currentData.reduce((acc, r) => acc + r.revenue, 0);
+        const totalCapEx = currentData.reduce((acc, r) => acc + r.installationCost, 0);
+        const avgRoi = (currentData.reduce((acc, r) => acc + r.roi, 0) / currentData.length).toFixed(1);
+        const totalGap = currentData.reduce((acc, r) => acc + r.infraGap, 0);
+
+        return {
+          totalEvs,
+          totalStations,
+          totalSessions,
+          avgUtilization,
+          totalRevenue,
+          avgCapEx: totalStations > 0 ? Math.round(totalCapEx / totalStations) : 0,
+          avgRoi,
+          totalGap,
+          evToStationRatio: totalStations > 0 ? Math.round(totalEvs / totalStations) : totalEvs
+        };
+      }, [currentData]);
+
+      // Calculate Top 10 cities by demand
+      const topDemandCities = useMemo(() => {
+        return [...currentData]
+          .sort((a, b) => b.sessions - a.sessions)
+          .slice(0, 10)
+          .map(r => ({ name: r.city, sessions: r.sessions, evs: r.evCount }));
+      }, [currentData]);
+
+      // State Performance
+      const statePerformance = useMemo(() => {
+        const map = {};
+        currentData.forEach(r => {
+          if (!map[r.state]) {
+            map[r.state] = { state: r.state, stations: 0, revenue: 0, sessions: 0 };
+          }
+          map[r.state].stations += r.stations;
+          map[r.state].revenue += r.revenue;
+          map[r.state].sessions += r.sessions;
+        });
+        return Object.values(map).sort((a, b) => b.revenue - a.revenue);
+      }, [currentData]);
+
+      return (
+        <div class="space-y-6">
+          {/* Welcome Bar */}
+          <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">Executive Performance Summary</h2>
+              <p class="text-xs text-slate-500">Tata Power Electric Mobility Division Corporate Strategy Board</p>
+            </div>
+            <div class="text-right text-xs text-slate-400 font-semibold tracking-wide">
+              SYSTEM STATUS: ONLINE • LIVE
+            </div>
+          </div>
+
+          {/* KPI Cards Grid */}
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Total EVs */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">EV Fleet Density</span>
+                <span class="rounded-full bg-blue-50 p-1.5 text-tata-blue"><Icons.Overview /></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-2xl font-bold text-tata-navy">{summaryStats.totalEvs?.toLocaleString()}</span>
+                <span class="ml-2 text-xs font-semibold text-emerald-600 inline-flex items-center">
+                  +12.4% <Icons.TrendingUp />
+                </span>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">Total active registered EVs in filtered zones</p>
+            </div>
+
+            {/* Charging Stations */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Stations Network</span>
+                <span class="rounded-full bg-amber-50 p-1.5 text-amber-600"><Icons.Bolt /></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-2xl font-bold text-tata-navy">{summaryStats.totalStations?.toLocaleString()}</span>
+                <span class="ml-2 text-xs font-semibold text-slate-500 inline-flex items-center">
+                  Cap: {summaryStats.evToStationRatio}:1 EVs
+                </span>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">Operational commercial grid stations</p>
+            </div>
+
+            {/* Utilization */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Avg Station Utilization</span>
+                <span class="rounded-full bg-emerald-50 p-1.5 text-emerald-600"><Icons.Demand /></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-2xl font-bold text-tata-navy">{summaryStats.avgUtilization}%</span>
+                <span class="ml-2 text-xs font-semibold text-emerald-600 inline-flex items-center">
+                  Optimal (40-60%)
+                </span>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">Active charging hours / capacity hours ratio</p>
+            </div>
+
+            {/* Revenue */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Monthly Gross Revenue</span>
+                <span class="rounded-full bg-indigo-50 p-1.5 text-indigo-600"><Icons.Revenue /></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-2xl font-bold text-tata-navy">{formatINR(summaryStats.totalRevenue)}</span>
+                <span class="ml-2 text-xs font-semibold text-emerald-600 inline-flex items-center">
+                  ROI: {summaryStats.avgRoi}%
+                </span>
+              </div>
+              <p class="mt-1 text-[10px] text-slate-400">Aggregated session receipts for selected month</p>
+            </div>
+          </div>
+
+          {/* Executive Insights Block */}
+          <div class="rounded-xl border border-rose-200/60 bg-rose-50/40 p-4 border-l-4 border-l-rose-500">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-rose-800">Critical Infrastructure Alarm (Active Gaps)</h3>
+            <p class="mt-1 text-xs text-rose-700 leading-relaxed">
+              We detect a systemic infrastructure deficit. The aggregated deficit across filtered zones is <span class="font-bold">{summaryStats.totalGap} charging stations</span>. 
+              The current EV-to-Station ratio is <span class="font-bold">{summaryStats.evToStationRatio} EVs per charger</span>, which exceeds our benchmark ceiling of 100:1. Areas like <span class="font-bold">Bengaluru</span>, <span class="font-bold">New Delhi</span>, and <span class="font-bold">Indore</span> are operating at over 75% capacity utilization during peak hours, indicating high risk of session queue failures and network churn.
+            </p>
+          </div>
+
+          {/* Charts Section */}
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* EV & Station Growth Trend */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">6-Month EV Density & Station Growth Trend</h3>
+              <div class="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={monthlyTrend}>
+                    <defs>
+                      <linearGradient id="colorEv" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#005b82" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#005b82" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorStations" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="date" tick={{fontSize: 10}} stroke="#94a3b8" />
+                    <YAxis yAxisId="left" tick={{fontSize: 10}} stroke="#005b82" label={{ value: 'Fleet EVs', angle: -90, position: 'insideLeft', fontSize: 10, offset: 0 }} />
+                    <YAxis yAxisId="right" orientation="right" tick={{fontSize: 10}} stroke="#10b981" label={{ value: 'Operational Stations', angle: 90, position: 'insideRight', fontSize: 10, offset: 0 }} />
+                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px' }} />
+                    <Area yAxisId="left" type="monotone" dataKey="totalEvs" name="Registered EVs" stroke="#005b82" fillOpacity={1} fill="url(#colorEv)" />
+                    <Area yAxisId="right" type="monotone" dataKey="totalStations" name="Active Chargers" stroke="#10b981" fillOpacity={1} fill="url(#colorStations)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Top Demand Cities */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">Top 10 Cities by Session Demand</h3>
+              <div class="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topDemandCities} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" tick={{fontSize: 10}} stroke="#94a3b8" />
+                    <YAxis dataKey="name" type="category" tick={{fontSize: 10}} width={75} stroke="#94a3b8" />
+                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px' }} />
+                    <Bar dataKey="sessions" name="Monthly Charging Sessions" fill="#002b49" radius={[0, 4, 4, 0]}>
+                      {topDemandCities.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={index < 3 ? '#005b82' : '#002b49'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Region / State Comparison Table */}
+          <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 class="text-sm font-bold text-tata-navy">State Performance Scorecard</h3>
+              <span class="text-xs text-slate-500">Sorted by Gross Revenue Contribution</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th class="py-3 px-6">State</th>
+                    <th class="py-3 px-6 text-right">Operational Stations</th>
+                    <th class="py-3 px-6 text-right">Monthly Sessions</th>
+                    <th class="py-3 px-6 text-right">Gross Monthly Revenue</th>
+                    <th class="py-3 px-6 text-right">Avg Session Rate</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
+                  {statePerformance.slice(0, 6).map((sp) => (
+                    <tr key={sp.state} class="hover:bg-slate-50/50">
+                      <td class="py-3.5 px-6 text-tata-navy">{sp.state}</td>
+                      <td class="py-3.5 px-6 text-right font-normal">{sp.stations}</td>
+                      <td class="py-3.5 px-6 text-right font-normal">{sp.sessions.toLocaleString()}</td>
+                      <td class="py-3.5 px-6 text-right text-emerald-600">{formatINR(sp.revenue)}</td>
+                      <td class="py-3.5 px-6 text-right font-normal">₹{(sp.revenue / (sp.sessions || 1)).toFixed(0)} / session</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Demand Analysis Page
+    function DemandAnalysis({ currentData }) {
+      const chartData = useMemo(() => {
+        // Average utilization and sessions by Region
+        const regMap = {};
+        currentData.forEach(r => {
+          if (!regMap[r.region]) {
+            regMap[r.region] = { name: r.region, evs: 0, sessions: 0, count: 0 };
+          }
+          regMap[r.region].evs += r.evCount;
+          regMap[r.region].sessions += r.sessions;
+          regMap[r.region].count += 1;
+        });
+        return Object.values(regMap).map(rm => ({
+          ...rm,
+          sessionsPerEv: parseFloat((rm.sessions / (rm.evs || 1)).toFixed(2))
+        }));
+      }, [currentData]);
+
+      // Scatter dataset showing EV Count vs Existing Stations
+      const scatterData = useMemo(() => {
+        return currentData.map(r => ({
+          name: r.city,
+          evs: r.evCount,
+          stations: r.stations,
+          utilization: r.utilization
+        }));
+      }, [currentData]);
+
+      return (
+        <div class="space-y-6">
+          <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">EV Fleet Density & Demand Distribution</h2>
+              <p class="text-xs text-slate-500">Cross-examining fleet density metrics against actual grid sessions loading</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* Region wise sessions per EV */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">Regional Demand Intensity (Sessions per EV)</h3>
+              <div class="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{fontSize: 10}} stroke="#94a3b8" />
+                    <YAxis tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Sessions / EV Ratio', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                    <Bar dataKey="sessionsPerEv" name="Intensity Index" fill="#005b82" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* EV Density vs Station Capacity Scatter Chart */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">Market Elasticity (EV Density vs Stations)</h3>
+              <div class="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis type="number" dataKey="evs" name="EVs" tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Total Registered EVs', position: 'insideBottom', offset: -5, fontSize: 10 }} />
+                    <YAxis type="number" dataKey="stations" name="Stations" tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Active Chargers', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                    <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                    <Scatter name="Cities" data={scatterData} fill="#10b981">
+                      {scatterData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.utilization > 60 ? '#ef4444' : '#10b981'} />
+                      ))}
+                    </Scatter>
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+              <div class="mt-2 flex justify-center space-x-6 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                <span class="flex items-center"><span class="h-2.5 w-2.5 bg-emerald-500 rounded-full mr-1.5"></span> Normal Utilization</span>
+                <span class="flex items-center"><span class="h-2.5 w-2.5 bg-red-500 rounded-full mr-1.5"></span> High Utilization (&gt;60%)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Heatmap-style Demand Severity Matrix */}
+          <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 class="text-sm font-bold text-tata-navy mb-4">Statewise Fleet Charger Demand Stress Index</h3>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {currentData.slice(0, 15).map((r) => {
+                const stressScore = Math.min(100, Math.round((r.evCount / (r.stations * 100)) * 100));
+                let colorClass = "bg-emerald-50 border-emerald-200 text-emerald-800";
+                if (stressScore > 150) colorClass = "bg-rose-50 border-rose-200 text-rose-800";
+                else if (stressScore > 80) colorClass = "bg-amber-50 border-amber-200 text-amber-800";
+                
+                return (
+                  <div key={r.city} class={`border rounded-lg p-3 text-center ${colorClass}`}>
+                    <span class="block text-xs font-bold tracking-tight">{r.city}</span>
+                    <span class="block text-[10px] text-slate-400 font-normal uppercase tracking-wider mt-0.5">{r.state}</span>
+                    <span class="block text-lg font-extrabold mt-2">{stressScore}%</span>
+                    <span class="block text-[9px] font-bold uppercase tracking-wider mt-1 opacity-75">Stress Index</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Infrastructure Gap Page
+    function InfrastructureGap({ currentData, setFilters, filters }) {
+      const stats = useMemo(() => {
+        const gapCount = currentData.reduce((acc, r) => acc + r.infraGap, 0);
+        const totalEvs = currentData.reduce((acc, r) => acc + r.evCount, 0);
+        const totalStations = currentData.reduce((acc, r) => acc + r.stations, 0);
+        const averageGap = (gapCount / currentData.length).toFixed(1);
+
+        return { gapCount, totalEvs, totalStations, averageGap };
+      }, [currentData]);
+
+      // Handle map coordinate node selection
+      const handleCityMarkerClick = (cityName) => {
+        setFilters({ ...filters, city: cityName });
+      };
+
+      return (
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left side Map visualization */}
+          <div class="lg:col-span-7 rounded-xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-tata-navy">Interactive Geographic Infrastructure Gap Map</h3>
+              <p class="text-[11px] text-slate-500">Bubble diameter corresponds to total deficit gap. Color reflects gap severity.</p>
+            </div>
+
+            {/* SVG Map Canvas */}
+            <div class="relative flex justify-center bg-slate-50 border border-slate-100 rounded-lg py-4 my-4 overflow-hidden h-[420px]">
+              <svg width="100%" height="100%" viewBox="0 0 500 580" class="max-w-md">
+                {/* Abstract dotted Grid backdrop */}
+                <defs>
+                  <pattern id="dot-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                    <circle cx="2" cy="2" r="1" fill="#e2e8f0" />
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#dot-grid)" />
+                
+                {/* India Outline Silhouette (Simulated for visual context) */}
+                <path d="M 200,60 L 230,110 L 290,130 L 330,160 L 390,210 L 400,260 L 340,310 L 320,380 L 270,440 L 240,510 L 220,560 L 210,560 L 195,500 L 180,450 L 125,380 L 120,320 L 70,290 L 120,240 L 140,180 Z" fill="none" stroke="#cbd5e1" strokeWidth="2" strokeDasharray="3 4" />
+
+                {/* City Bubbles */}
+                {currentData.map((r) => {
+                  const coords = mapCoordinates[r.city];
+                  if (!coords) return null;
+
+                  // Radius based on Gap (scaled: 5px base + gap*2px)
+                  const radius = 6 + (r.infraGap * 0.8);
+                  
+                  // Color based on severity score
+                  let color = "#10b981"; // green
+                  if (r.infraGap > 15) color = "#ef4444"; // red
+                  else if (r.infraGap > 5) color = "#f97316"; // orange
+
+                  const isSelected = filters.city === r.city;
+
+                  return (
+                    <g key={r.city} class="cursor-pointer group" onClick={() => handleCityMarkerClick(r.city)}>
+                      <circle
+                        cx={coords.x}
+                        cy={coords.y}
+                        r={radius}
+                        fill={color}
+                        fillOpacity={0.65}
+                        stroke={isSelected ? "#002b49" : color}
+                        strokeWidth={isSelected ? 3 : 1}
+                        class="transition-all duration-200 group-hover:fill-opacity-95"
+                      />
+                      {isSelected && (
+                        <circle
+                          cx={coords.x}
+                          cy={coords.y}
+                          r={radius + 6}
+                          fill="none"
+                          stroke="#002b49"
+                          strokeWidth="1.5"
+                          strokeDasharray="2 2"
+                        />
+                      )}
+                      <title>{`${r.city} (${r.state})\nExisting Stations: ${r.stations}\nOptimal: ${r.optimalStations}\nDeficit Gap: ${r.infraGap}`}</title>
+                    </g>
+                  );
+                })}
+              </svg>
+
+              {/* Map Legend */}
+              <div class="absolute bottom-3 left-3 bg-white/90 border border-slate-200/60 rounded-lg p-2.5 text-[10px] space-y-1 font-semibold text-slate-600">
+                <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-red-500 opacity-70 mr-2"></span> High Deficit (Gap &gt; 15)</div>
+                <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-orange-500 opacity-70 mr-2"></span> Mid Deficit (Gap 6-15)</div>
+                <div class="flex items-center"><span class="h-3 w-3 rounded-full bg-emerald-500 opacity-70 mr-2"></span> Optimized (Gap 0-5)</div>
+                <div class="pt-1.5 border-t border-slate-100 text-[9px] text-slate-400 font-medium">Click bubbles to filter dashboard.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right side Gap scorecard lists */}
+          <div class="lg:col-span-5 space-y-6">
+            {/* Summary KPI */}
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Filtered Gap Summary</h3>
+              <div class="mt-4 grid grid-cols-2 gap-4">
+                <div>
+                  <span class="block text-2xl font-bold text-tata-navy">{stats.gapCount}</span>
+                  <span class="text-[10px] text-slate-400 uppercase font-semibold">Total Station Deficit</span>
+                </div>
+                <div>
+                  <span class="block text-2xl font-bold text-tata-navy">{stats.averageGap}</span>
+                  <span class="text-[10px] text-slate-400 uppercase font-semibold">Avg Deficit / City</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Top Underserved Cities list */}
+            <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div class="p-4 border-b border-slate-100">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-tata-navy">Top Deficit Locations</h3>
+              </div>
+              <div class="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
+                {[...currentData]
+                  .sort((a, b) => b.infraGap - a.infraGap)
+                  .map((r, idx) => (
+                    <div key={r.city} class="p-3.5 flex items-center justify-between hover:bg-slate-50/50">
+                      <div>
+                        <span class="block text-xs font-bold text-slate-800">{r.city}</span>
+                        <span class="block text-[9px] text-slate-400 font-semibold">{r.state} • EV Count: {r.evCount.toLocaleString()}</span>
+                      </div>
+                      <div class="flex items-center space-x-3">
+                        <div class="text-right">
+                          <span class="block text-xs font-bold text-rose-600">-{r.infraGap}</span>
+                          <span class="block text-[9px] text-slate-400 font-normal uppercase">Stations</span>
+                        </div>
+                        <span class={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          r.infraGap > 15 ? 'bg-red-50 text-red-700' : 'bg-orange-50 text-orange-700'
+                        }`}>
+                          {r.infraGap > 15 ? 'Critical' : 'High'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Location Analysis Page
+    function LocationAnalysis({ currentData }) {
+      const [sortBy, setSortBy] = useState("priorityScore");
+      const [sortAsc, setSortAsc] = useState(false);
+
+      // Setup dynamic recommendations weights for local metrics calculation
+      const calculatedTableData = useMemo(() => {
+        const defaultWeights = { evDensity: 0.3, demand: 0.2, infraGap: 0.3, roi: 0.2 };
+        return window.EV_ANALYTICS_DATA.calculateRecommendations(currentData, defaultWeights);
+      }, [currentData]);
+
+      // Sorting handler
+      const sortedData = useMemo(() => {
+        const sorted = [...calculatedTableData];
+        sorted.sort((a, b) => {
+          let aVal = a[sortBy];
+          let bVal = b[sortBy];
+          if (typeof aVal === 'string') {
+            return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+          }
+          return sortAsc ? aVal - bVal : bVal - aVal;
+        });
+        return sorted;
+      }, [calculatedTableData, sortBy, sortAsc]);
+
+      const handleSort = (field) => {
+        if (sortBy === field) {
+          setSortAsc(!sortAsc);
+        } else {
+          setSortBy(field);
+          setSortAsc(false);
+        }
+      };
+
+      const scatterChartData = useMemo(() => {
+        return currentData.map(r => ({
+          name: r.city,
+          cost: Math.round(r.singleStationCapEx / 100000), // in Lakhs
+          expectedRev: Math.round((r.revenue / (r.stations || 1)) / 1000), // Expected monthly revenue per station in thousands
+          priority: r.infraGap
+        }));
+      }, [currentData]);
+
+      return (
+        <div class="space-y-6">
+          <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">Grid Expansion Location Comparison Matrix</h2>
+              <p class="text-xs text-slate-500">Comprehensive scoring criteria covering capital requirements, utility gaps, and operational ROIs</p>
+            </div>
+          </div>
+
+          {/* Scatter Plot Section */}
+          <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 class="text-sm font-bold text-tata-navy mb-4">Capital Allocation Efficiency (Avg Installation Cost vs Monthly Revenue per Charger)</h3>
+            <div class="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="cost" name="Installation Cost" unit=" L" tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Avg Charger Installation Cost (INR Lakhs)', position: 'insideBottom', offset: -5, fontSize: 10 }} />
+                  <YAxis type="number" dataKey="expectedRev" name="Expected Revenue" unit="k" tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Monthly Rev per Charger (INR Thousands)', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                  <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                  <Scatter name="Locations" data={scatterChartData} fill="#005b82" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Interactive Table */}
+          <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("city")}>City {sortBy === "city" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("evCount")}>EV Density {sortBy === "evCount" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("stations")}>Exist. Stations {sortBy === "stations" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("infraGap")}>Gap Deficit {sortBy === "infraGap" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("utilization")}>Utilization {sortBy === "utilization" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("installationCost")}>CapEx Cost {sortBy === "installationCost" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("roi")}>Expected ROI {sortBy === "roi" && (sortAsc ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("priorityScore")}>Score {sortBy === "priorityScore" && (sortAsc ? "▲" : "▼")}</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
+                  {sortedData.map((row) => (
+                    <tr key={row.city} class="hover:bg-slate-50/50">
+                      <td class="py-3 px-4 text-tata-navy">{row.city} <span class="text-[9px] text-slate-400 font-normal">({row.state})</span></td>
+                      <td class="py-3 px-4 text-right font-normal">{row.evCount.toLocaleString()}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.stations}</td>
+                      <td class="py-3 px-4 text-right text-rose-600 font-bold">{row.infraGap}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.utilization}%</td>
+                      <td class="py-3 px-4 text-right font-normal">{formatINR(row.installationCost)}</td>
+                      <td class="py-3 px-4 text-right font-normal text-emerald-600">{row.roi}%</td>
+                      <td class="py-3 px-4 text-right">
+                        <span class={`inline-block rounded px-2 py-0.5 text-[10px] font-bold ${
+                          row.priorityScore >= 70 ? 'bg-red-50 text-red-700' :
+                          row.priorityScore >= 45 ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-700'
+                        }`}>
+                          {row.priorityScore}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Revenue & ROI Page
+    function RevenueROI({ currentData }) {
+      const stats = useMemo(() => {
+        if (currentData.length === 0) return {};
+        const totalRevenue = currentData.reduce((acc, r) => acc + r.revenue, 0);
+        const totalProfit = currentData.reduce((acc, r) => acc + r.profit, 0);
+        const totalStations = currentData.reduce((acc, r) => acc + r.stations, 0);
+        const totalCapEx = currentData.reduce((acc, r) => acc + r.installationCost, 0);
+        const avgRoi = (currentData.reduce((acc, r) => acc + r.roi, 0) / currentData.length).toFixed(1);
+        
+        const totalOpEx = totalRevenue - totalProfit;
+
+        return {
+          totalRevenue,
+          totalProfit,
+          totalOpEx,
+          totalStations,
+          totalCapEx,
+          avgRoi
+        };
+      }, [currentData]);
+
+      const costVsRevenueData = useMemo(() => {
+        // Top 8 states revenue vs opex vs profit
+        const map = {};
+        currentData.forEach(r => {
+          if (!map[r.state]) map[r.state] = { name: r.state, revenue: 0, opex: 0, profit: 0 };
+          map[r.state].revenue += r.revenue;
+          map[r.state].opex += (r.stations * 18000);
+          map[r.state].profit += r.profit;
+        });
+        return Object.values(map)
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 8)
+          .map(item => ({
+            ...item,
+            revenueLakhs: parseFloat((item.revenue / 100000).toFixed(1)),
+            opexLakhs: parseFloat((item.opex / 100000).toFixed(1)),
+            profitLakhs: parseFloat((item.profit / 100000).toFixed(1))
+          }));
+      }, [currentData]);
+
+      const highRoiLocations = useMemo(() => {
+        return [...currentData]
+          .sort((a, b) => b.roi - a.roi)
+          .slice(0, 5);
+      }, [currentData]);
+
+      return (
+        <div class="space-y-6">
+          <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">Revenue Realization & Capital Efficiency Analysis</h2>
+              <p class="text-xs text-slate-500">Auditing operating revenues, estimated maintenance overheads (OpEx) and CapEx returns</p>
+            </div>
+          </div>
+
+          {/* KPI row */}
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Network CapEx Base</span>
+              <span class="block text-xl font-extrabold text-tata-navy mt-2">{formatINR(stats.totalCapEx)}</span>
+              <span class="block text-[9px] text-slate-400 mt-1">Aggregated installation capital</span>
+            </div>
+            <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Gross Operating Receipts</span>
+              <span class="block text-xl font-extrabold text-tata-navy mt-2">{formatINR(stats.totalRevenue)}</span>
+              <span class="block text-[9px] text-slate-400 mt-1">Calculated session sales</span>
+            </div>
+            <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Estimated Grid OpEx</span>
+              <span class="block text-xl font-extrabold text-slate-600 mt-2">{formatINR(stats.totalOpEx)}</span>
+              <span class="block text-[9px] text-slate-400 mt-1">Charging grid lease & energy opex</span>
+            </div>
+            <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm border-l-4 border-l-emerald-500">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Net Monthly Yield</span>
+              <span class="block text-xl font-extrabold text-emerald-600 mt-2">{formatINR(stats.totalProfit)}</span>
+              <span class="block text-[9px] text-slate-400 mt-1">Avg ROI: <span class="font-bold text-emerald-700">{stats.avgRoi}%</span></span>
+            </div>
+          </div>
+
+          {/* Charts */}
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Cost vs Revenue Bar Chart */}
+            <div class="lg:col-span-2 bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">State-wise Commercial Financial Split (INR Lakhs)</h3>
+              <div class="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={costVsRevenueData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{fontSize: 10}} stroke="#94a3b8" />
+                    <YAxis tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'INR (Lakhs)', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                    <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px' }} />
+                    <Bar dataKey="revenueLakhs" name="Gross Revenue" fill="#005b82" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="opexLakhs" name="OpEx Overhead" fill="#94a3b8" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="profitLakhs" name="Net Yield" fill="#10b981" radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Top ROI Locations list */}
+            <div class="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
+              <h3 class="text-sm font-bold text-tata-navy mb-4">Top 5 Asset-Yield Locations (ROI)</h3>
+              <div class="space-y-4">
+                {highRoiLocations.map((loc, idx) => (
+                  <div key={loc.city} class="flex items-center justify-between border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+                    <div>
+                      <span class="text-xs font-bold text-slate-800">{loc.city}</span>
+                      <span class="block text-[9px] text-slate-400 font-semibold">{loc.state} • {loc.stations} Chargers</span>
+                    </div>
+                    <div class="text-right">
+                      <span class="block text-xs font-bold text-emerald-600">{loc.roi}%</span>
+                      <span class="block text-[9px] text-slate-400 uppercase">Annualized ROI</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Charger Mix Optimizer
+    function ChargerOptimizer({ currentData }) {
+      const cities = useMemo(() => {
+        return [...new Set(currentData.map(r => r.city))];
+      }, [currentData]);
+
+      const [selectedCity, setSelectedCity] = useState("");
+
+      // Update selectedCity when list changes
+      useEffect(() => {
+        if (cities.length > 0 && !cities.includes(selectedCity)) {
+          setSelectedCity(cities[0]);
+        }
+      }, [cities]);
+
+      const activeRecord = useMemo(() => {
+        return currentData.find(r => r.city === selectedCity) || currentData[0] || {};
+      }, [currentData, selectedCity]);
+
+      // Sliders state
+      const [acCount, setAcCount] = useState(5);
+      const [dcCount, setDcCount] = useState(2);
+
+      // Adjust counts when city changes to provide a smart default recommendation mix
+      useEffect(() => {
+        if (activeRecord && activeRecord.infraGap) {
+          const gap = activeRecord.infraGap;
+          const dc = Math.ceil(gap * 0.3);
+          const ac = Math.max(1, gap - dc);
+          setAcCount(ac);
+          setDcCount(dc);
+        }
+      }, [selectedCity]);
+
+      // Constants
+      const acCost = 250000; // 2.5 Lakhs
+      const dcCost = 1500000; // 15 Lakhs
+      const acOpEx = 6000; // ₹6,000 monthly
+      const dcOpEx = 28000; // ₹28,000 monthly
+      const acTariff = 180; // ₹180 per session avg
+      const dcTariff = 520; // ₹520 per session avg (Fast charging premium)
+      
+      const acSessions = 4 * 30; // avg 4 sessions/day per AC charger
+      const dcSessions = 14 * 30; // avg 14 sessions/day per DC Fast charger (high rotation)
+
+      // Projections
+      const totalCapEx = (acCount * acCost) + (dcCount * dcCost);
+      const monthlyOpEx = (acCount * acOpEx) + (dcCount * dcOpEx);
+      const monthlyRevenue = (acCount * acSessions * acTariff) + (dcCount * dcSessions * dcTariff);
+      const monthlyNetProfit = monthlyRevenue - monthlyOpEx;
+      const annualizedROI = totalCapEx > 0 ? ((monthlyNetProfit * 12) / totalCapEx) * 100 : 0;
+      const paybackPeriodYears = monthlyNetProfit > 0 ? (totalCapEx / (monthlyNetProfit * 12)) : 0;
+
+      // Comparative Cash Flow dataset (5 Years projection in INR Lakhs)
+      const cashFlowData = useMemo(() => {
+        const years = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5"];
+        const totalCount = acCount + dcCount || 1;
+
+        // Base A: 100% AC Chargers
+        const capExA = totalCount * acCost;
+        const profitA = ((totalCount * acSessions * acTariff) - (totalCount * acOpEx)) * 12;
+
+        // Base B: 100% DC Fast Chargers
+        const capExB = totalCount * dcCost;
+        const profitB = ((totalCount * dcSessions * dcTariff) - (totalCount * dcOpEx)) * 12;
+
+        // Base C: Custom User Mix
+        const capExC = totalCapEx;
+        const profitC = monthlyNetProfit * 12;
+
+        return years.map((yr, idx) => {
+          const mult = idx + 1;
+          return {
+            name: yr,
+            "100% AC Slow Grid": Math.round((-capExA + profitA * mult) / 100000),
+            "100% DC Fast Grid": Math.round((-capExB + profitB * mult) / 100000),
+            "Your Custom Mix": Math.round((-capExC + profitC * mult) / 100000)
+          };
+        });
+      }, [acCount, dcCount, totalCapEx, monthlyNetProfit]);
+
+      return (
+        <div class="space-y-6">
+          <div class="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">AC vs DC Fast Charger Mix & CapEx Optimizer</h2>
+              <p class="text-xs text-slate-500">Configure slow AC (7.4kW/22kW) vs fast DC (50kW/120kW) ratios to optimize station deployment economics</p>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+              <label class="text-xs font-bold text-slate-500 uppercase">Select Target City:</label>
+              <select
+                value={selectedCity}
+                onChange={(e) => setSelectedCity(e.target.value)}
+                class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm focus:border-tata-sky focus:outline-none"
+              >
+                {cities.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Controls */}
+            <div class="lg:col-span-5 bg-white border border-slate-200 p-5 rounded-xl shadow-sm space-y-6">
+              <div>
+                <h3 class="text-sm font-bold text-tata-navy border-b border-slate-100 pb-2">1. Charger Configuration Mix</h3>
+                <p class="text-[11px] text-slate-400 mt-1">Adjust counts to match the local network gap of {activeRecord.infraGap} stations.</p>
+              </div>
+
+              {/* AC Charger count */}
+              <div class="space-y-2">
+                <div class="flex justify-between items-center text-xs font-bold">
+                  <span class="text-slate-600 flex items-center">
+                    <span class="h-2 w-2 rounded-full bg-sky-500 mr-2"></span> AC Chargers (Slow)
+                  </span>
+                  <span class="text-tata-blue text-sm">{acCount} Units</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={acCount}
+                  onChange={(e) => setAcCount(parseInt(e.target.value))}
+                  class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                />
+                <div class="flex justify-between text-[9px] text-slate-400 font-semibold leading-normal">
+                  <span>CapEx: ₹2.5L / unit</span>
+                  <span>OpEx: ₹6k / mo</span>
+                  <span>Session: 4/day</span>
+                </div>
+              </div>
+
+              {/* DC Charger count */}
+              <div class="space-y-2">
+                <div class="flex justify-between items-center text-xs font-bold">
+                  <span class="text-slate-600 flex items-center">
+                    <span class="h-2 w-2 rounded-full bg-emerald-500 mr-2"></span> DC Fast Chargers (50kW)
+                  </span>
+                  <span class="text-tata-blue text-sm">{dcCount} Units</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="50"
+                  value={dcCount}
+                  onChange={(e) => setDcCount(parseInt(e.target.value))}
+                  class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                />
+                <div class="flex justify-between text-[9px] text-slate-400 font-semibold leading-normal">
+                  <span>CapEx: ₹15L / unit</span>
+                  <span>OpEx: ₹28k / mo</span>
+                  <span>Session: 14/day</span>
+                </div>
+              </div>
+
+              {/* Cost parameters review */}
+              <div class="bg-slate-50 border border-slate-100 rounded-lg p-4 space-y-2 text-[10px] text-slate-500">
+                <span class="block font-bold text-slate-700 uppercase tracking-wider text-[9px]">Financial Assumptions Matrix</span>
+                <div class="flex justify-between border-b border-slate-200/50 pb-1.5">
+                  <span>AC Session Price (7.4kW):</span>
+                  <span class="font-bold text-slate-700">₹{acTariff} avg</span>
+                </div>
+                <div class="flex justify-between border-b border-slate-200/50 pb-1.5">
+                  <span>DC Session Price (50kW):</span>
+                  <span class="font-bold text-slate-700">₹{dcTariff} avg</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Target Substation Load Limit:</span>
+                  <span class="font-bold text-slate-700">{acCount * 7.4 + dcCount * 50} kW / 500 kW</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Results Projections */}
+            <div class="lg:col-span-7 space-y-6">
+              {/* Financial KPI stats */}
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+                  <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Total CapEx</span>
+                  <span class="block text-lg font-extrabold text-tata-navy mt-1">{formatINR(totalCapEx)}</span>
+                </div>
+                <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm border-l-4 border-l-emerald-500">
+                  <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Net Monthly Yield</span>
+                  <span class="block text-lg font-extrabold text-emerald-600 mt-1">{formatINR(monthlyNetProfit)}</span>
+                </div>
+                <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+                  <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Projected ROI</span>
+                  <span class="block text-lg font-extrabold text-tata-blue mt-1">{annualizedROI.toFixed(1)}%</span>
+                </div>
+                <div class="bg-white border border-slate-200 p-4 rounded-xl shadow-sm">
+                  <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Payback Period</span>
+                  <span class="block text-lg font-extrabold text-slate-700 mt-1">{paybackPeriodYears.toFixed(1)} Yrs</span>
+                </div>
+              </div>
+
+              {/* Line Chart comparing cumulative flows */}
+              <div class="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
+                <h3 class="text-sm font-bold text-tata-navy mb-4">5-Year Cumulative Cash Flow Projections (INR Lakhs)</h3>
+                <div class="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={cashFlowData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="name" tick={{fontSize: 10}} stroke="#94a3b8" />
+                      <YAxis tick={{fontSize: 10}} stroke="#94a3b8" label={{ value: 'Net Flow (Lakhs)', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                      <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px' }} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <Line type="monotone" dataKey="100% AC Slow Grid" stroke="#00a3e0" strokeWidth={1.5} dot={{ r: 2 }} />
+                      <Line type="monotone" dataKey="100% DC Fast Grid" stroke="#94a3b8" strokeWidth={1.5} dot={{ r: 2 }} />
+                      <Line type="monotone" dataKey="Your Custom Mix" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Expansion Recommendations (Priority Score engine)
+    function Recommendations({ currentData }) {
+      const [weights, setWeights] = useState({
+        evDensity: 30,
+        demand: 25,
+        infraGap: 25,
+        roi: 20
+      });
+
+      const handleSliderChange = (field, val) => {
+        setWeights({
+          ...weights,
+          [field]: parseInt(val)
+        });
+      };
+
+      // Recalculate weights based on inputs (scaled to sum to 1.0)
+      const recommendations = useMemo(() => {
+        const sum = weights.evDensity + weights.demand + weights.infraGap + weights.roi;
+        const normalizedWeights = {
+          evDensity: weights.evDensity / sum,
+          demand: weights.demand / sum,
+          infraGap: weights.infraGap / sum,
+          roi: weights.roi / sum
+        };
+
+        return window.EV_ANALYTICS_DATA.calculateRecommendations(currentData, normalizedWeights);
+      }, [currentData, weights]);
+
+      return (
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left interactive slider controller */}
+          <div class="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-tata-navy">Recommendation Engine Controller</h3>
+              <p class="text-xs text-slate-500 mt-1">Calibrate score parameters below to fit strategic investment focus</p>
+              
+              <div class="space-y-5 mt-6">
+                {/* Weight 1 */}
+                <div>
+                  <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-slate-600">EV Density Factor</span>
+                    <span class="text-tata-blue">{weights.evDensity}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={weights.evDensity}
+                    onChange={(e) => handleSliderChange("evDensity", e.target.value)}
+                    class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                  />
+                  <span class="text-[9px] text-slate-400">Prioritizes areas with high volumes of registered EVs</span>
+                </div>
+
+                {/* Weight 2 */}
+                <div>
+                  <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-slate-600">Charging Session Demand</span>
+                    <span class="text-tata-blue">{weights.demand}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={weights.demand}
+                    onChange={(e) => handleSliderChange("demand", e.target.value)}
+                    class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                  />
+                  <span class="text-[9px] text-slate-400">Prioritizes areas with high current charging transactions</span>
+                </div>
+
+                {/* Weight 3 */}
+                <div>
+                  <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-slate-600">Coverage Gap Severity</span>
+                    <span class="text-tata-blue">{weights.infraGap}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={weights.infraGap}
+                    onChange={(e) => handleSliderChange("infraGap", e.target.value)}
+                    class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                  />
+                  <span class="text-[9px] text-slate-400">Prioritizes locations with massive deficit gaps</span>
+                </div>
+
+                {/* Weight 4 */}
+                <div>
+                  <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-slate-600">Expected Asset Yield (ROI)</span>
+                    <span class="text-tata-blue">{weights.roi}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={weights.roi}
+                    onChange={(e) => handleSliderChange("roi", e.target.value)}
+                    class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-tata-blue"
+                  />
+                  <span class="text-[9px] text-slate-400">Prioritizes high expected return on investment metrics</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-6 border-t border-slate-100 pt-4 text-[10px] text-slate-400 leading-normal font-semibold">
+              NOTE: Adjusting the parameters instantly runs a normalization matrix in the client browser, re-ranking all {currentData.length} locations.
+            </div>
+          </div>
+
+          {/* Right results layout */}
+          <div class="lg:col-span-8 space-y-4 max-h-[560px] overflow-y-auto pr-1">
+            <h3 class="text-sm font-bold text-tata-navy px-1">Top Recommended Locations for Grid Expansion</h3>
+            
+            {recommendations.slice(0, 12).map((rec, idx) => {
+              let priorityColor = "border-l-rose-500 bg-rose-50/20";
+              let badgeColor = "bg-rose-50 text-rose-700";
+              if (rec.priorityClass === "High") {
+                priorityColor = "border-l-orange-500 bg-orange-50/20";
+                badgeColor = "bg-orange-50 text-orange-700";
+              } else if (rec.priorityClass === "Medium") {
+                priorityColor = "border-l-amber-500 bg-amber-50/20";
+                badgeColor = "bg-amber-50 text-amber-700";
+              } else if (rec.priorityClass === "Low") {
+                priorityColor = "border-l-slate-400 bg-slate-50/40";
+                badgeColor = "bg-slate-100 text-slate-600";
+              }
+
+              return (
+                <div key={rec.city} class={`border border-slate-200 border-l-4 rounded-xl p-4 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-3 ${priorityColor}`}>
+                  <div class="flex-1 space-y-1">
+                    <div class="flex items-center space-x-2">
+                      <span class="text-slate-400 text-xs font-bold font-mono">#{idx+1}</span>
+                      <h4 class="text-sm font-bold text-tata-navy">{rec.city}</h4>
+                      <span class="text-[10px] text-slate-500 font-semibold">({rec.state})</span>
+                      <span class={`rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide ${badgeColor}`}>
+                        {rec.priorityClass} Priority
+                      </span>
+                    </div>
+                    <p class="text-xs text-slate-600 leading-normal font-semibold">
+                      {rec.reasoning}
+                    </p>
+                  </div>
+                  <div class="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
+                    <div class="text-left md:text-right">
+                      <span class="block text-xs font-bold text-tata-navy">Score: {rec.priorityScore}</span>
+                      <span class="block text-[10px] text-slate-500">CapEx: {formatINR(rec.installationCost)}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Data Explorer
+    function DataExplorer({ filteredData }) {
+      const [searchQuery, setSearchQuery] = useState("");
+      const [currentPage, setCurrentPage] = useState(1);
+      const [sortKey, setSortKey] = useState("date");
+      const [sortAscending, setSortAscending] = useState(false);
+      const itemsPerPage = 10;
+
+      // Filter by search
+      const searchedData = useMemo(() => {
+        return filteredData.filter(r => 
+          r.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.state.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.region.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      }, [filteredData, searchQuery]);
+
+      // Sort data
+      const sortedData = useMemo(() => {
+        const sorted = [...searchedData];
+        sorted.sort((a, b) => {
+          let aVal = a[sortKey];
+          let bVal = b[sortKey];
+          if (typeof aVal === 'string') {
+            return sortAscending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+          }
+          return sortAscending ? aVal - bVal : bVal - aVal;
+        });
+        return sorted;
+      }, [searchedData, sortKey, sortAscending]);
+
+      // Paginate data
+      const paginatedData = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return sortedData.slice(startIndex, startIndex + itemsPerPage);
+      }, [sortedData, currentPage]);
+
+      const totalPages = Math.ceil(sortedData.length / itemsPerPage);
+
+      const handleSort = (key) => {
+        if (sortKey === key) {
+          setSortAscending(!sortAscending);
+        } else {
+          setSortKey(key);
+          setSortAscending(false);
+        }
+      };
+
+      const simulateExport = () => {
+        alert("Simulating Export to Excel / CSV...\nDataset containing " + sortedData.length + " entries compiled and pushed to download stream.");
+      };
+
+      // Reset page on search/filter changes
+      useEffect(() => {
+        setCurrentPage(1);
+      }, [searchQuery, filteredData]);
+
+      return (
+        <div class="space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <div>
+              <h2 class="text-base font-bold text-tata-navy">EV Infrastructure Database Explorer</h2>
+              <p class="text-xs text-slate-500">Query direct table records representing underlying state databases</p>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+              {/* Search bar */}
+              <div class="relative">
+                <div class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none">
+                  <Icons.Search />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search City, State..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  class="pl-9 pr-4 py-1.5 text-xs rounded-lg border border-slate-200 w-56 focus:border-tata-sky focus:outline-none bg-slate-50"
+                />
+              </div>
+
+              {/* Export CSV Button */}
+              <button
+                onClick={simulateExport}
+                class="flex items-center space-x-2 bg-tata-navy text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-tata-blue shadow transition-colors"
+              >
+                <Icons.Export />
+                <span>Export Dataset</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Raw Data Table */}
+          <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider select-none">
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("date")}>Date {sortKey === "date" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("city")}>City {sortKey === "city" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("state")}>State {sortKey === "state" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("evCount")}>EVs {sortKey === "evCount" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("stations")}>Stations {sortKey === "stations" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("sessions")}>Sessions {sortKey === "sessions" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("utilization")}>Utilization {sortKey === "utilization" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("installationCost")}>CapEx {sortKey === "installationCost" && (sortAscending ? "▲" : "▼")}</th>
+                    <th class="py-3 px-4 cursor-pointer hover:bg-slate-100 text-right" onClick={() => handleSort("revenue")}>Revenue {sortKey === "revenue" && (sortAscending ? "▲" : "▼")}</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
+                  {paginatedData.map((row, idx) => (
+                    <tr key={`${row.city}-${row.date}`} class="hover:bg-slate-50/50">
+                      <td class="py-3 px-4 font-normal text-slate-500">{row.date}</td>
+                      <td class="py-3 px-4 text-tata-navy">{row.city}</td>
+                      <td class="py-3 px-4 font-normal">{row.state}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.evCount.toLocaleString()}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.stations}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.sessions.toLocaleString()}</td>
+                      <td class="py-3 px-4 text-right font-normal">{row.utilization}%</td>
+                      <td class="py-3 px-4 text-right font-normal">{formatINR(row.installationCost)}</td>
+                      <td class="py-3 px-4 text-right text-emerald-600">{formatINR(row.revenue)}</td>
+                    </tr>
+                  ))}
+                  {paginatedData.length === 0 && (
+                    <tr>
+                      <td colSpan="9" class="text-center py-8 text-slate-400 font-semibold">No records match the active query.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination controls */}
+            {totalPages > 1 && (
+              <div class="bg-slate-50 px-4 py-3 flex items-center justify-between border-t border-slate-200">
+                <div class="text-xs text-slate-500 font-semibold">
+                  Showing <span class="font-bold text-slate-700">{((currentPage - 1) * itemsPerPage) + 1}</span> to <span class="font-bold text-slate-700">{Math.min(currentPage * itemsPerPage, sortedData.length)}</span> of <span class="font-bold text-slate-700">{sortedData.length}</span> entries
+                </div>
+                <div class="flex items-center space-x-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    class="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 disabled:opacity-50 hover:bg-slate-100"
+                  >
+                    Previous
+                  </button>
+                  <span class="text-xs font-bold text-slate-700 px-2">Page {currentPage} of {totalPages}</span>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    class="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 disabled:opacity-50 hover:bg-slate-100"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Integration & Architecture Pipeline
+    function ArchitecturePipeline() {
+      return (
+        <div class="space-y-8">
+          <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+            <h2 class="text-base font-bold text-tata-navy">Data Integration Pipeline & System Architecture</h2>
+            <p class="text-xs text-slate-500">Mapping the strategic tools flow from raw local data collection to board level expansion decisions</p>
+          </div>
+
+          {/* Diagram 1: Analytics Pipeline */}
+          <div class="bg-white border border-slate-200 p-6 rounded-xl shadow-sm">
+            <h3 class="text-sm font-bold text-tata-navy mb-6">Data Process Pipeline Workflow</h3>
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+              
+              {/* Block 1 */}
+              <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center relative">
+                <span class="block text-xs font-bold text-tata-navy uppercase tracking-wider">1. Raw Data</span>
+                <p class="text-[10px] text-slate-500 mt-1 leading-normal font-semibold">Weekly utility telemetry & EV registration files</p>
+              </div>
+
+              {/* Arrow */}
+              <div class="hidden md:block text-slate-300 font-bold">➔</div>
+
+              {/* Block 2 */}
+              <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
+                <span class="block text-xs font-bold text-tata-navy uppercase tracking-wider">2. Excel Cleaning</span>
+                <p class="text-[10px] text-slate-500 mt-1 leading-normal font-semibold">Sorting duplicates, missing values & format normalization</p>
+              </div>
+
+              {/* Arrow */}
+              <div class="hidden md:block text-slate-300 font-bold">➔</div>
+
+              {/* Block 3 */}
+              <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
+                <span class="block text-xs font-bold text-tata-navy uppercase tracking-wider">3. SQL Database</span>
+                <p class="text-[10px] text-slate-500 mt-1 leading-normal font-semibold">Structured tables stored in MySQL/PostgreSQL schema</p>
+              </div>
+
+              {/* Arrow */}
+              <div class="hidden md:block text-slate-300 font-bold">➔</div>
+
+              {/* Block 4 */}
+              <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
+                <span class="block text-xs font-bold text-tata-navy uppercase tracking-wider">4. Python EDA</span>
+                <p class="text-[10px] text-slate-500 mt-1 leading-normal font-semibold">Regression models, correlation analyses & predictions</p>
+              </div>
+
+              {/* Arrow */}
+              <div class="hidden md:block text-slate-300 font-bold">➔</div>
+
+              {/* Block 5 */}
+              <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
+                <span class="block text-xs font-bold text-tata-navy uppercase tracking-wider">5. Power BI</span>
+                <p class="text-[10px] text-slate-500 mt-1 leading-normal font-semibold">Executive dashboards & regional matrix reports</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Diagram 2: System Architecture */}
+          <div class="bg-white border border-slate-200 p-6 rounded-xl shadow-sm">
+            <h3 class="text-sm font-bold text-tata-navy mb-6">Technical Architecture Diagram</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+              
+              {/* Column 1: Sources */}
+              <div class="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Data Ingestion</h4>
+                <div class="space-y-3">
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+                    <span class="block text-xs font-bold text-tata-navy">Excel Worksheets</span>
+                    <span class="block text-[9px] text-slate-400">RTO Fleet Reports</span>
+                  </div>
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+                    <span class="block text-xs font-bold text-tata-navy">IoT Charger Logs</span>
+                    <span class="block text-[9px] text-slate-400">Operational Sessions JSON</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 2: Storage & Processing */}
+              <div class="border border-slate-100 rounded-xl p-4 bg-slate-50/50 flex flex-col justify-center">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Processing Layer</h4>
+                <div class="space-y-3">
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+                    <span class="block text-xs font-bold text-tata-navy">PostgreSQL Relational DB</span>
+                    <span class="block text-[9px] text-slate-400">tata_ev_db (cities & ev_records)</span>
+                  </div>
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+                    <span class="block text-xs font-bold text-tata-navy">Python Analytics Core</span>
+                    <span class="block text-[9px] text-slate-400">Pandas & Scikit-learn ROI</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 3: Insights */}
+              <div class="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">BI & Decisions</h4>
+                <div class="space-y-3">
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs">
+                    <span class="block text-xs font-bold text-tata-navy">Power BI Web App</span>
+                    <span class="block text-[9px] text-slate-400">Interactive visuals</span>
+                  </div>
+                  <div class="bg-white border border-slate-200 rounded-lg p-3 shadow-xs border-l-4 border-l-emerald-500">
+                    <span class="block text-xs font-bold text-tata-navy">Interactive React Portal</span>
+                    <span class="block text-[9px] text-slate-400">Strategic recommendation engine</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW: Print Report Document Layout
+    function PrintReport({ filters, currentData }) {
+      const summaryStats = useMemo(() => {
+        if (currentData.length === 0) return {};
+        const totalEvs = currentData.reduce((acc, r) => acc + r.evCount, 0);
+        const totalStations = currentData.reduce((acc, r) => acc + r.stations, 0);
+        const totalSessions = currentData.reduce((acc, r) => acc + r.sessions, 0);
+        const avgUtilization = (currentData.reduce((acc, r) => acc + r.utilization, 0) / currentData.length).toFixed(1);
+        const totalRevenue = currentData.reduce((acc, r) => acc + r.revenue, 0);
+        const totalCapEx = currentData.reduce((acc, r) => acc + r.installationCost, 0);
+        const avgRoi = (currentData.reduce((acc, r) => acc + r.roi, 0) / currentData.length).toFixed(1);
+        const totalGap = currentData.reduce((acc, r) => acc + r.infraGap, 0);
+
+        return {
+          totalEvs,
+          totalStations,
+          totalSessions,
+          avgUtilization,
+          totalRevenue,
+          avgCapEx: totalStations > 0 ? Math.round(totalCapEx / totalStations) : 0,
+          avgRoi,
+          totalGap,
+          evToStationRatio: totalStations > 0 ? Math.round(totalEvs / totalStations) : totalEvs
+        };
+      }, [currentData]);
+
+      // Top 5 Recommendations for printing
+      const recommendations = useMemo(() => {
+        return window.EV_ANALYTICS_DATA.calculateRecommendations(currentData)
+          .slice(0, 5);
+      }, [currentData]);
+
+      return (
+        <div class="hidden print:block p-8 max-w-4xl mx-auto bg-white text-slate-900 font-sans">
+          {/* Header */}
+          <div class="flex justify-between items-center border-b-2 border-slate-900 pb-4 mb-6">
+            <div>
+              <h1 class="text-2xl font-extrabold tracking-tight text-slate-900">TATA POWER</h1>
+              <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none mt-1">EV CHARGING NETWORK STRATEGY REPORT</p>
+            </div>
+            <div class="text-right">
+              <p class="text-xs font-bold text-slate-700">Date Generated: {new Date().toLocaleDateString()}</p>
+              <p class="text-[9px] text-slate-500">Filter Date: {filters.date}</p>
+              <p class="text-[9px] text-slate-500">Region: {filters.region} • State: {filters.state} • City: {filters.city}</p>
+            </div>
+          </div>
+
+          {/* Section 1: Executive Summary */}
+          <div class="mb-6">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 border-b border-slate-200 pb-1 mb-2">1. Executive Summary</h2>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              This document represents the corporate strategy brief for EV charging network expansion under the filtered criteria. 
+              The target locations have been evaluated based on fleet densities, network deficits, and expected asset yields.
+            </p>
+          </div>
+
+          {/* Section 2: Key Network Metrics */}
+          <div class="mb-6">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 border-b border-slate-200 pb-1 mb-3">2. Core Infrastructure & Financial Metrics</h2>
+            <div class="grid grid-cols-4 gap-4 text-center">
+              <div class="border border-slate-200 p-2.5 rounded-lg bg-slate-50">
+                <span class="block text-[9px] font-bold text-slate-500 uppercase">EV Fleet Density</span>
+                <span class="block text-base font-bold text-slate-900 mt-1">{summaryStats.totalEvs?.toLocaleString()}</span>
+              </div>
+              <div class="border border-slate-200 p-2.5 rounded-lg bg-slate-50">
+                <span class="block text-[9px] font-bold text-slate-500 uppercase">Stations Network</span>
+                <span class="block text-base font-bold text-slate-900 mt-1">{summaryStats.totalStations?.toLocaleString()}</span>
+              </div>
+              <div class="border border-slate-200 p-2.5 rounded-lg bg-slate-50">
+                <span class="block text-[9px] font-bold text-slate-500 uppercase">Net Deficit Gap</span>
+                <span class="block text-base font-bold text-rose-600 mt-1">{summaryStats.totalGap} stations</span>
+              </div>
+              <div class="border border-slate-200 p-2.5 rounded-lg bg-slate-50">
+                <span class="block text-[9px] font-bold text-slate-500 uppercase">Est. Monthly Sales</span>
+                <span class="block text-base font-bold text-emerald-700 mt-1">{formatINR(summaryStats.totalRevenue)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Priority Target List */}
+          <div class="mb-6">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 border-b border-slate-200 pb-1 mb-2">3. Recommended Candidates for Expansion</h2>
+            <table class="w-full text-left border-collapse mt-2">
+              <thead>
+                <tr class="bg-slate-100 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase">
+                  <th class="py-2 px-3">Rank</th>
+                  <th class="py-2 px-3">City</th>
+                  <th class="py-2 px-3 text-right">EV Density</th>
+                  <th class="py-2 px-3 text-right">Exist. Chargers</th>
+                  <th class="py-2 px-3 text-right">Deficit Gap</th>
+                  <th class="py-2 px-3 text-right">Projected ROI</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-200 text-[10px] text-slate-700 font-semibold">
+                {recommendations.map((rec, idx) => (
+                  <tr key={rec.city}>
+                    <td class="py-2 px-3">#{idx+1}</td>
+                    <td class="py-2 px-3 text-slate-900">{rec.city} ({rec.state})</td>
+                    <td class="py-2 px-3 text-right">{rec.evCount.toLocaleString()}</td>
+                    <td class="py-2 px-3 text-right">{rec.stations}</td>
+                    <td class="py-2 px-3 text-right text-rose-600">-{rec.infraGap}</td>
+                    <td class="py-2 px-3 text-right text-emerald-600">{rec.roi}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer Signature */}
+          <div class="mt-12 flex justify-between text-[10px] text-slate-500 pt-8 border-t border-slate-200">
+            <div>
+              <p class="font-bold">Prepared by: Corporate Mobility Planning</p>
+              <p>Tata Power Electric Mobility Division</p>
+            </div>
+            <div class="text-right">
+              <p class="font-bold">Verified by: Strategy Board</p>
+              <p>Tata Power Ltd.</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // MAIN CORE CONTAINER APP
+    function App() {
+      const [isAuthenticated, setIsAuthenticated] = useState(false);
+      const [currentUser, setCurrentUser] = useState(null);
+      const [activeTab, setActiveTab] = useState("overview");
+
+      // Global Filters state
+      const [filters, setFilters] = useState({
+        date: "June 2026",
+        region: "All",
+        state: "All",
+        city: "All"
+      });
+
+      // Filtered static values derived from global mock database
+      const uniqueStates = useMemo(() => {
+        if (filters.region === "All") {
+          return window.EV_ANALYTICS_DATA.states;
+        }
+        // Filter states belonging to the selected region
+        const base = window.EV_ANALYTICS_DATA.records.filter(r => r.region === filters.region);
+        return [...new Set(base.map(r => r.state))];
+      }, [filters.region]);
+
+      const uniqueCities = useMemo(() => {
+        let base = window.EV_ANALYTICS_DATA.records;
+        if (filters.region !== "All") {
+          base = base.filter(r => r.region === filters.region);
+        }
+        if (filters.state !== "All") {
+          base = base.filter(r => r.state === filters.state);
+        }
+        return [...new Set(base.map(r => r.city))];
+      }, [filters.region, filters.state]);
+
+      // Dynamic Filtered Dataset
+      const filteredData = useMemo(() => {
+        let base = window.EV_ANALYTICS_DATA.records.filter(r => r.date === filters.date);
+
+        if (filters.region !== "All") {
+          base = base.filter(r => r.region === filters.region);
+        }
+        if (filters.state !== "All") {
+          base = base.filter(r => r.state === filters.state);
+        }
+        if (filters.city !== "All") {
+          base = base.filter(r => r.city === filters.city);
+        }
+        return base;
+      }, [filters]);
+
+      // Monthly Trend Data aggregated across all locations
+      const monthlyTrend = useMemo(() => {
+        const trendMap = {};
+        window.EV_ANALYTICS_DATA.months.forEach(m => {
+          trendMap[m] = { date: m, totalEvs: 0, totalStations: 0 };
+        });
+
+        window.EV_ANALYTICS_DATA.records.forEach(r => {
+          trendMap[r.date].totalEvs += r.evCount;
+          trendMap[r.date].totalStations += r.stations;
+        });
+
+        return Object.values(trendMap);
+      }, []);
+
+      // Switch router to render corresponding view
+      const renderActiveView = () => {
+        switch (activeTab) {
+          case "overview":
+            return <OverviewDashboard currentData={filteredData} monthlyTrend={monthlyTrend} />;
+          case "demand":
+            return <DemandAnalysis currentData={filteredData} />;
+          case "gap":
+            return <InfrastructureGap currentData={filteredData} setFilters={setFilters} filters={filters} />;
+          case "location":
+            return <LocationAnalysis currentData={filteredData} />;
+          case "revenue":
+            return <RevenueROI currentData={filteredData} />;
+          case "optimizer":
+            return <ChargerOptimizer currentData={filteredData} />;
+          case "recommendations":
+            return <Recommendations currentData={filteredData} />;
+          case "explorer":
+            return <DataExplorer filteredData={filteredData} />;
+          case "pipeline":
+            return <ArchitecturePipeline />;
+          default:
+            return <OverviewDashboard currentData={filteredData} monthlyTrend={monthlyTrend} />;
+        }
+      };
+
+      if (!isAuthenticated) {
+        return <Login onLogin={(user) => { setCurrentUser(user); setIsAuthenticated(true); }} />;
+      }
+
+      return (
+        <div class="h-full">
+          {/* Dashboard UI (hidden during print) */}
+          <div class="flex h-screen bg-slate-50 overflow-hidden print:hidden">
+            {/* Sidebar Layout */}
+            <Sidebar
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              currentUser={currentUser}
+              onLogout={() => { setCurrentUser(null); setIsAuthenticated(false); }}
+            />
+
+            {/* Main Layout */}
+            <div class="flex flex-1 flex-col overflow-hidden">
+              {/* Filter Toolbar Topbar */}
+              <TopBar
+                filters={filters}
+                setFilters={setFilters}
+                uniqueStates={uniqueStates}
+                uniqueCities={uniqueCities}
+              />
+
+              {/* Main scrollable views area */}
+              <main class="flex-1 overflow-y-auto p-6 bg-slate-100/60 relative">
+                {renderActiveView()}
+
+                {/* Disclaimer footer */}
+                <div class="mt-8 border-t border-slate-200 pt-4 text-center pb-2">
+                  <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                    This system uses analytical data for strategic planning. All metrics are computed from verified business datasets across 70 Indian cities.
+                  </span>
+                </div>
+              </main>
+            </div>
+          </div>
+
+          {/* Strategic Memo Print Template (visible only during print) */}
+          <PrintReport filters={filters} currentData={filteredData} />
+        </div>
+      );
+    }
+
+    // Mount to Root DOM
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
